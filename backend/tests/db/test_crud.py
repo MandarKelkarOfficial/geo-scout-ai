@@ -40,6 +40,7 @@ async def test_query_logs(async_db):
     log = await crud.create_query_log(
         async_db,
         session_id=session.id,
+        role="assistant",
         query_text="Where is Pune?",
         response_text="Pune is in India.",
         tools_used=["geocoding"],
@@ -47,6 +48,8 @@ async def test_query_logs(async_db):
     )
     assert log.id is not None
     assert log.tools_used == ["geocoding"]
+    assert log.role == "assistant"
+
 
 @pytest.mark.asyncio
 async def test_saved_locations(async_db):

@@ -13,6 +13,12 @@ class Settings(BaseSettings):
     LLM_API_KEY: str | None = None
     LLM_MODEL_NAME: str = "geoai-core-v1"
     REQUEST_TIMEOUT_SECONDS: int = 10
+    # Auth
+    JWT_SECRET_KEY: str = "change-me-in-production-use-a-long-random-string"
+    JWT_ALGORITHM: str = "HS256"
+    JWT_EXPIRE_DAYS: int = 7
+    # CORS
+    FRONTEND_ORIGIN: str = "http://localhost:5173"
 
     model_config = SettingsConfigDict(env_file=".env")
 
