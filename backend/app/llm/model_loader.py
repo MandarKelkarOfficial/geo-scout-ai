@@ -113,18 +113,25 @@ class MockLLMProvider(BaseLLMProvider):
                 "tool": "get_weather",
                 "arguments": {"location": loc}
             }
-        elif any(word in query for word in ["house", "buy", "rent", "property"]):
-            match = re.search(r'in ([\w\s]+)', query + " ")
+        elif any(word in query for word in ["house", "buy", "rent", "property", "estate"]):
+            match = re.search(r'in ([\w\s]+?)(?: under| for| with| near|$)', query + " ")
             loc = match.group(1).strip() if match else "Kharadi"
             
-            # Simple budget extraction (assuming lakhs)
-            budget_match = re.findall(r'\b\d+(?:\.\d+)?\b', query)
+            # Simple budget extraction (handling 'L' for Lakhs)
+            budget_match = re.findall(r'\b(\d+(?:\.\d+)?)(l|lakhs?)?\b', query.lower())
             min_b, max_b = None, None
+            
+            def parse_budget(val, suffix):
+                num = float(val)
+                if suffix and suffix.startswith('l'):
+                    return num * 100000
+                return num
+
             if len(budget_match) >= 2:
-                min_b = float(budget_match[0]) * 100000
-                max_b = float(budget_match[1]) * 100000
+                min_b = parse_budget(budget_match[0][0], budget_match[0][1])
+                max_b = parse_budget(budget_match[1][0], budget_match[1][1])
             elif len(budget_match) == 1:
-                max_b = float(budget_match[0]) * 100000
+                max_b = parse_budget(budget_match[0][0], budget_match[0][1])
             
             args = {"location": loc}
             if min_b: args["min_budget"] = min_b
