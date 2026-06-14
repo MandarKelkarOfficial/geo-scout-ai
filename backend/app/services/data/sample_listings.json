@@ -1,0 +1,6 @@
+[
+  {"title": "2 BHK in Kharadi", "price": 8500000, "currency": "INR", "area_sqft": 1000, "location": "Kharadi, Pune", "dealer_name": "ABC Real Estate", "dealer_contact": "12345"},
+  {"title": "3 BHK in Kharadi", "price": 12500000, "currency": "INR", "area_sqft": 1500, "location": "Kharadi, Pune", "dealer_name": "ABC Real Estate", "dealer_contact": "12345"},
+  {"title": "1 BHK in Wagholi", "price": 4500000, "currency": "INR", "area_sqft": 600, "location": "Wagholi, Pune", "dealer_name": "XYZ Brokers", "dealer_contact": "98765"},
+  {"title": "2 BHK in Viman Nagar", "price": 11000000, "currency": "INR", "area_sqft": 1100, "location": "Viman Nagar, Pune", "dealer_name": "Prime Properties", "dealer_contact": "55555"}
+]

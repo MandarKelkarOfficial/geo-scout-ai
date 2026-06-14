@@ -1,0 +1,82 @@
+GeoAI Backend - File Documentation
+==================================
+
+ROOT DIRECTORY
+--------------
+- requirements.txt: Lists all the Python package dependencies needed for the project (e.g., FastAPI, Uvicorn, SQLAlchemy, Pydantic, httpx).
+- README.md: Provides a high-level overview of the project, features, and folder architecture.
+- setup.md: Step-by-step instructions for creating the virtual environment, running the server, and executing tests.
+- .env: Environment variables file for local development configuration.
+
+alembic/
+--------
+- alembic.ini: Alembic configuration file for database migrations.
+- env.py: Environment configuration for Alembic, allowing it to run asynchronous migrations using the `aiosqlite` driver.
+- versions/: Directory containing sequential database migration scripts (e.g., initial schema generation, data seeding).
+
+app/
+----
+- main.py: The main FastAPI application entry point. It sets up CORS, registers global exception handlers, and mounts all the API routers.
+- __init__.py: Marks the directory as a Python package.
+
+app/core/
+---------
+- config.py: Centralized configuration management using `pydantic-settings`. Loads values from `.env` and exposes them via a cached `get_settings()` function.
+- security.py: Contains security dependencies (API key verification) and utility functions for password hashing and verification using `passlib` with `bcrypt`.
+
+app/db/
+-------
+- session.py: Configures the asynchronous SQLAlchemy engine and provides the `get_db` session dependency. The project currently uses an async **SQLite** database via the `aiosqlite` driver.
+- models.py: Contains the full set of SQLAlchemy 2.0 declarative models defining the database schema: `User`, `ChatSession`, `QueryLog`, `SavedLocation`, and `RealEstateListingCache`.
+- crud.py: Contains asynchronous database operations (CRUD: Create, Read, Update, Delete) to interact with the database tables.
+
+app/schemas/
+------------
+- user.py: Pydantic models for user registration and authentication handling (`UserCreate`, `UserResponse`).
+- location.py: Pydantic models for saving locations (`SavedLocationCreate`, `SavedLocationResponse`).
+- chat.py: Pydantic models for chat sessions and query logs.
+- query.py: Pydantic models (`QueryRequest`, `QueryResponse`) defining the shape of data sent to and received from the agent `/query` endpoint.
+- response.py: Pydantic models (`GeocodingResult`, `WeatherData`, `PlaceResult`, etc.) representing the structured data returned by various backend services.
+
+app/utils/
+----------
+- exceptions.py: Custom application exception classes (`ExternalAPIError`, `LocationNotFoundError`) to handle specific failure scenarios cleanly.
+- geo.py: Geographic utility functions, such as the `haversine` formula to calculate distances between coordinates.
+
+app/services/
+-------------
+- geocoding.py: Service that calls the external Nominatim API to convert location names into latitude/longitude coordinates.
+- weather.py: Service that fetches current weather data and forecasts from the Open-Meteo API.
+- places.py: Service that searches for nearby amenities (like hospitals or restaurants) using the Overpass OSM API.
+- satellite.py: A stub service placeholder for fetching satellite imagery (planned for Sentinel Hub integration).
+- realestate.py: A mock data provider service that filters property listings based on location and budget from a local JSON file.
+- rag.py: A stub service placeholder for future Retrieval-Augmented Generation (RAG) and local vector database search.
+- data/sample_listings.json: A static JSON file containing mock real estate listings used by `realestate.py`.
+
+app/llm/
+--------
+- tool_schema.py: Contains the JSON schema definitions of all available tools. These definitions tell the LLM what functions it can call.
+- model_loader.py: Defines abstract base classes for LLM providers. Includes `MockLLMProvider`, a mock implementation that simulates LLM reasoning and tool calls using regex text parsing.
+- agent.py: The core `GeoAIAgent` orchestrator. It passes queries to the LLM, executes requested tools, injects the results back into the conversation, and generates a final cohesive answer.
+- prompts/system_prompt.txt: The baseline system instructions that govern how the GeoAI agent behaves.
+
+app/api/
+--------
+- deps.py: FastAPI dependency injection configuration. Wires up HTTP clients, services, and the agent, making them available to the route handlers.
+
+app/api/v1/routes/
+------------------
+- health.py: Contains the basic `/api/v1/health` endpoint used to check if the server is running.
+- location.py: Defines independent GET endpoints (`/location/geocode`, `/location/weather`, `/location/places`) that allow clients to bypass the LLM and query services directly.
+- query.py: Defines the main POST `/api/v1/query` endpoint where users submit natural language questions to the GeoAIAgent.
+
+tests/
+------
+Contains all unit and integration tests written in Pytest.
+- db/test_models.py: Tests database model creation and insertion using an in-memory async SQLite database.
+- db/test_crud.py: Tests asynchronous CRUD operations against the in-memory SQLite database.
+- db/test_migrations.py: Tests the execution of Alembic database migrations.
+- core/test_security.py: Validates that the API key verification correctly bypasses in development and enforces in production.
+- api/v1/routes/*.py: Tests the API endpoints using an async HTTP client to ensure proper request routing and response shapes.
+- services/*.py: Unit tests for all services. Uses the `respx` library to mock external network calls (e.g., to Open-Meteo and Nominatim) to test both success and error states.
+- llm/*.py: Tests the `MockLLMProvider` logic and the orchestrator loop of the `GeoAIAgent`.
