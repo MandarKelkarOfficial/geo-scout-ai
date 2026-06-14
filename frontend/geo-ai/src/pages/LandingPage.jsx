@@ -4,12 +4,12 @@ import '../assets/globe.css';
 import Globe from '../components/Globe';
 
 const FEATURES = [
-  { icon: '📍', title: 'Geocoding', desc: 'Find any place on Earth instantly' },
-  { icon: '🌤', title: 'Live Weather', desc: 'Real-time weather for any location' },
-  { icon: '🏙', title: 'Nearby Places', desc: 'Hospitals, restaurants, parks & more' },
-  { icon: '🏠', title: 'Real Estate', desc: 'Property listings & market insights' },
-  { icon: '🛰', title: 'Satellite View', desc: 'Aerial imagery & terrain data' },
-  { icon: '💬', title: 'Natural Language', desc: 'Just ask in plain English' },
+  { icon: 'pin_drop', title: 'Geocoding', desc: 'Find any place on Earth instantly' },
+  { icon: 'partly_cloudy_day', title: 'Live Weather', desc: 'Real-time weather for any location' },
+  { icon: 'location_city', title: 'Nearby Places', desc: 'Hospitals, restaurants, parks & more' },
+  { icon: 'real_estate_agent', title: 'Real Estate', desc: 'Property listings & market insights' },
+  { icon: 'satellite_alt', title: 'Satellite View', desc: 'Aerial imagery & terrain data' },
+  { icon: 'forum', title: 'Natural Language', desc: 'Just ask in plain English' },
 ];
 
 export default function LandingPage() {
@@ -166,7 +166,9 @@ export default function LandingPage() {
                 e.currentTarget.style.boxShadow = 'none';
               }}
             >
-              <div style={{ fontSize: 26, marginBottom: 10 }}>{f.icon}</div>
+              <div className="material-symbols-outlined" style={{ fontSize: '32px', marginBottom: '16px', color: '#f97316' }}>
+                {f.icon}
+              </div>
               <h3 style={{ fontWeight: 600, fontSize: 13, color: '#fff', marginBottom: 4 }}>{f.title}</h3>
               <p style={{ fontSize: 12, color: '#9ca3af', lineHeight: 1.55 }}>{f.desc}</p>
             </div>
