@@ -13,13 +13,23 @@ class LoginRequest(BaseModel):
     email: str
     password: str
 
-@router.post("/register", response_model=UserRead, status_code=status.HTTP_201_CREATED)
-async def register(user_in: UserCreate, db: AsyncSession = Depends(get_db)):
+@router.post("/register", status_code=status.HTTP_201_CREATED)
+async def register(user_in: UserCreate, response: Response, db: AsyncSession = Depends(get_db)):
     existing = await crud.get_user_by_email(db, user_in.email)
     if existing:
         raise HTTPException(status_code=409, detail="Email already registered")
     user = await crud.create_user(db, user_in)
-    return user
+    # Auto-login: set the auth cookie immediately after registration
+    token = create_access_token(user.id)
+    response.set_cookie(
+        key="access_token",
+        value=token,
+        httponly=True,
+        samesite="lax",
+        secure=False,   # Set to True in production with HTTPS
+        max_age=60 * 60 * 24 * 7  # 7 days
+    )
+    return UserRead.model_validate(user)
 
 @router.post("/login")
 async def login(login_data: LoginRequest, response: Response, db: AsyncSession = Depends(get_db)):
