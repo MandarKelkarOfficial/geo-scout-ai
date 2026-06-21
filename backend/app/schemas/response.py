@@ -14,6 +14,9 @@ class WeatherData(BaseModel):
     condition: str
     humidity: int | None
     wind_speed_kmh: float | None
+    feels_like_celsius: float | None = None
+    precipitation_mm: float | None = None
+    uv_index: float | None = None
 
 class PlaceResult(BaseModel):
     model_config = ConfigDict(from_attributes=True)
@@ -30,9 +33,16 @@ class PlacesResponse(BaseModel):
 class SatelliteInfo(BaseModel):
     model_config = ConfigDict(from_attributes=True)
     location: str
-    image_url: str | None
+    image_url: str | None          # Primary NASA GIBS tile URL
     description: str
     acquisition_date: str | None
+    # Tile metadata for frontend
+    tile_x: int | None = None
+    tile_y: int | None = None
+    zoom_level: int | None = None
+    osm_tile_url: str | None = None   # OpenStreetMap fallback tile
+    layer: str | None = None          # NASA GIBS layer name
+    source: str | None = None         # Data source description
 
 class RealEstateListing(BaseModel):
     model_config = ConfigDict(from_attributes=True)

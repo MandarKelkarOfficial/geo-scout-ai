@@ -1,18 +1,152 @@
-from abc import ABC, abstractmethod
+import json
 import re
+import httpx
+import structlog
+from abc import ABC, abstractmethod
 from app.core.config import get_settings
 
 settings = get_settings()
+logger = structlog.get_logger()
+
 
 class BaseLLMProvider(ABC):
     @abstractmethod
     async def generate(self, messages: list[dict], tools: list[dict] | None = None) -> dict:
         pass
 
+
+# ---------------------------------------------------------------------------
+# OllamaLLMProvider — calls local Ollama (http://localhost:11434)
+# Uses the /api/chat endpoint with native tool-calling support.
+# Compatible with qwen2.5-coder:1.5b and other Ollama models.
+# ---------------------------------------------------------------------------
+
+class OllamaLLMProvider(BaseLLMProvider):
+    def __init__(self):
+        self.base_url = settings.OLLAMA_BASE_URL
+        self.model = settings.LLM_MODEL_NAME
+        self.timeout = settings.LLM_TIMEOUT_SECONDS
+
+    def _convert_tools_to_ollama_format(self, tools: list[dict]) -> list[dict]:
+        """Convert our internal tool schema to Ollama's expected format."""
+        ollama_tools = []
+        for tool in tools:
+            ollama_tools.append({
+                "type": "function",
+                "function": {
+                    "name": tool["name"],
+                    "description": tool["description"],
+                    "parameters": tool.get("parameters", {})
+                }
+            })
+        return ollama_tools
+
+    def _convert_messages_for_ollama(self, messages: list[dict]) -> list[dict]:
+        """
+        Adapt our internal message format to Ollama's chat format.
+        qwen2.5-coder works best when tool results are presented as
+        a user turn so it knows to synthesize a natural language response.
+        """
+        converted = []
+        for msg in messages:
+            role = msg.get("role")
+            content = msg.get("content", "")
+
+            if role == "tool":
+                # Present tool result as a user message for qwen2.5-coder
+                # so the model synthesizes a natural language answer.
+                tool_name = msg.get("name", "tool")
+                converted.append({
+                    "role": "user",
+                    "content": (
+                        f"[Tool result from {tool_name}]\n"
+                        f"{content}\n\n"
+                        f"Now give a clear, helpful, conversational answer to the original question using this data."
+                    )
+                })
+            elif role == "assistant" and content is None:
+                # Skip assistant messages that were just tool-call placeholders
+                pass
+            elif role in ("system", "user", "assistant"):
+                if content:  # skip empty content messages
+                    converted.append({"role": role, "content": content})
+        return converted
+
+    async def generate(self, messages: list[dict], tools: list[dict] | None = None) -> dict:
+        payload = {
+            "model": self.model,
+            "messages": self._convert_messages_for_ollama(messages),
+            "stream": False,
+        }
+
+        if tools:
+            payload["tools"] = self._convert_tools_to_ollama_format(tools)
+
+        try:
+            async with httpx.AsyncClient(timeout=self.timeout) as client:
+                response = await client.post(
+                    f"{self.base_url}/api/chat",
+                    json=payload
+                )
+                response.raise_for_status()
+                data = response.json()
+        except httpx.HTTPError as e:
+            logger.error("ollama_api_error", error=str(e))
+            return {"type": "final_answer", "content": f"[LLM Error] Could not reach Ollama: {e}"}
+
+        message = data.get("message", {})
+        content = message.get("content", "").strip()
+
+        # --- Path 1: Native tool_calls in the message (full Ollama tool-call support) ---
+        tool_calls = message.get("tool_calls")
+        if tool_calls and len(tool_calls) > 0:
+            first_call = tool_calls[0]
+            func = first_call.get("function", {})
+            tool_name = func.get("name", "")
+            raw_args = func.get("arguments", {})
+            if isinstance(raw_args, str):
+                try:
+                    args = json.loads(raw_args)
+                except json.JSONDecodeError:
+                    args = {}
+            else:
+                args = raw_args
+            logger.info("ollama_tool_call_native", tool=tool_name, args=args)
+            return {"type": "tool_call", "tool": tool_name, "arguments": args}
+
+        # --- Path 2: qwen2.5-coder outputs JSON tool call inside content string ---
+        # The model may produce bare JSON or wrap it in markdown: ```json {...} ```
+        stripped = content
+        if stripped.startswith("```"):
+            # Remove opening fence (```json or just ```)
+            stripped = stripped.split("\n", 1)[-1] if "\n" in stripped else stripped
+            # Remove closing fence
+            if stripped.endswith("```"):
+                stripped = stripped[: stripped.rfind("```")].strip()
+        stripped = stripped.strip()
+
+        if stripped.startswith("{"):
+            try:
+                parsed = json.loads(stripped)
+                tool_name = parsed.get("name") or parsed.get("function")
+                raw_args = parsed.get("arguments") or parsed.get("parameters") or {}
+                if tool_name and isinstance(raw_args, dict):
+                    logger.info("ollama_tool_call_content_json", tool=tool_name, args=raw_args)
+                    return {"type": "tool_call", "tool": tool_name, "arguments": raw_args}
+            except json.JSONDecodeError:
+                pass
+
+        # --- Path 3: Plain text final answer ---
+        logger.info("ollama_final_answer", content_len=len(content))
+        return {"type": "final_answer", "content": content}
+
+
+# ---------------------------------------------------------------------------
+# MockLLMProvider — regex-based fallback for offline/dev use
+# ---------------------------------------------------------------------------
+
 class MockLLMProvider(BaseLLMProvider):
     async def generate(self, messages: list[dict], tools: list[dict] | None = None) -> dict:
-        import json
-
         # Check if the last message is a tool result — synthesize natural language
         last_message = messages[-1] if messages else {}
         if last_message.get("role") == "tool":
@@ -41,10 +175,9 @@ class MockLLMProvider(BaseLLMProvider):
 
             elif tool_name == "get_nearby_places":
                 places = data.get("places", [])
-                # category is on each PlaceResult item, not top-level
                 category = places[0].get("category", "places") if places else "places"
                 if not places:
-                    return {"type": "final_answer", "content": f"I couldn't find any {category} nearby. The area may not have mapped results yet."}
+                    return {"type": "final_answer", "content": f"I couldn't find any {category} nearby."}
                 lines = [f"**Nearby {category.title()}**\n"]
                 for idx, p in enumerate(places[:8], 1):
                     name = p.get("name", "Unnamed")
@@ -62,15 +195,10 @@ class MockLLMProvider(BaseLLMProvider):
 
             elif tool_name == "search_real_estate":
                 listings = data.get("listings", [])
-                # location is on each listing item in this schema
                 location = listings[0].get("location", "") if listings else ""
-                budget_max = None
                 if not listings:
-                    return {"type": "final_answer", "content": f"No property listings found matching your budget."}
-                budget_str = ""
-                if budget_max:
-                    budget_str = f" under ₹{int(budget_max/100000)}L"
-                lines = [f"**Real Estate Listings in {location}{budget_str}**\n"]
+                    return {"type": "final_answer", "content": "No property listings found matching your budget."}
+                lines = [f"**Real Estate Listings in {location}**\n"]
                 for i, l in enumerate(listings[:6], 1):
                     title = l.get("title", "Property")
                     price = l.get("price", 0)
@@ -95,10 +223,20 @@ class MockLLMProvider(BaseLLMProvider):
                     lines.append(f"Coordinates: {lat:.5f}°N, {lon:.5f}°E")
                 return {"type": "final_answer", "content": "\n".join(lines)}
 
-            # Fallback for unknown tools
+            elif tool_name == "get_satellite_info":
+                loc = data.get("location", "")
+                img_url = data.get("tile_url") or data.get("image_url")
+                desc = data.get("description", "")
+                lines = [f"**Satellite Info: {loc}**\n"]
+                if desc:
+                    lines.append(desc)
+                if img_url:
+                    lines.append(f"[View Satellite Tile]({img_url})")
+                return {"type": "final_answer", "content": "\n".join(lines)}
+
             return {"type": "final_answer", "content": str(raw)}
 
-        # Otherwise, process the latest user query
+        # Regex-based routing for user queries
         query = ""
         for msg in reversed(messages):
             if msg.get("role") == "user":
@@ -108,23 +246,20 @@ class MockLLMProvider(BaseLLMProvider):
         if "weather" in query or "temperature" in query:
             match = re.search(r'in (.*)', query)
             loc = match.group(1).strip().strip('?') if match else "Pune"
-            return {
-                "type": "tool_call",
-                "tool": "get_weather",
-                "arguments": {"location": loc}
-            }
-        elif any(word in query for word in ["house", "buy", "rent", "property", "estate"]):
+            return {"type": "tool_call", "tool": "get_weather", "arguments": {"location": loc}}
+
+        elif any(word in query for word in ["house", "buy", "rent", "property", "estate", "flat", "apartment"]):
             match = re.search(r'in ([\w\s]+?)(?: under| for| with| near|$)', query + " ")
             loc = match.group(1).strip() if match else "Kharadi"
-            
-            # Simple budget extraction (handling 'L' for Lakhs)
-            budget_match = re.findall(r'\b(\d+(?:\.\d+)?)(l|lakhs?)?\b', query.lower())
+            budget_match = re.findall(r'\b(\d+(?:\.\d+)?)(l|lakhs?|cr|crore)?\b', query.lower())
             min_b, max_b = None, None
-            
+
             def parse_budget(val, suffix):
                 num = float(val)
                 if suffix and suffix.startswith('l'):
                     return num * 100000
+                if suffix and suffix.startswith('c'):
+                    return num * 10000000
                 return num
 
             if len(budget_match) >= 2:
@@ -132,17 +267,20 @@ class MockLLMProvider(BaseLLMProvider):
                 max_b = parse_budget(budget_match[1][0], budget_match[1][1])
             elif len(budget_match) == 1:
                 max_b = parse_budget(budget_match[0][0], budget_match[0][1])
-            
+
             args = {"location": loc}
-            if min_b: args["min_budget"] = min_b
-            if max_b: args["max_budget"] = max_b
-                
-            return {
-                "type": "tool_call",
-                "tool": "search_real_estate",
-                "arguments": args
-            }
-        elif "near" in query or "nearby" in query:
+            if min_b:
+                args["min_budget"] = min_b
+            if max_b:
+                args["max_budget"] = max_b
+            return {"type": "tool_call", "tool": "search_real_estate", "arguments": args}
+
+        elif "satellite" in query or "aerial" in query or "imagery" in query:
+            match = re.search(r'(?:of|for|in|near) ([\w\s,]+?)(?:\?|$)', query)
+            loc = match.group(1).strip() if match else "Pune"
+            return {"type": "tool_call", "tool": "get_satellite_info", "arguments": {"location": loc}}
+
+        elif "near" in query or "nearby" in query or "find" in query:
             match = re.search(r'(.*?) near (.*)', query)
             if match:
                 cat = match.group(1).replace("find", "").replace("search", "").strip()
@@ -150,19 +288,18 @@ class MockLLMProvider(BaseLLMProvider):
             else:
                 cat = "restaurant"
                 loc = "Pune"
-            return {
-                "type": "tool_call",
-                "tool": "get_nearby_places",
-                "arguments": {"location": loc, "category": cat}
-            }
-        
+            return {"type": "tool_call", "tool": "get_nearby_places", "arguments": {"location": loc, "category": cat}}
+
         return {
             "type": "final_answer",
-            "content": "I can help you with weather, places, and real estate!"
+            "content": "I can help you with weather, nearby places, real estate, and satellite imagery for any location in India!"
         }
+
 
 def get_llm_provider() -> BaseLLMProvider:
     provider = settings.LLM_PROVIDER.lower()
+    if provider == "ollama":
+        return OllamaLLMProvider()
     if provider == "mock":
         return MockLLMProvider()
-    raise NotImplementedError(f"LLM provider '{provider}' is not implemented.")
+    raise NotImplementedError(f"LLM provider '{provider}' is not implemented yet.")
