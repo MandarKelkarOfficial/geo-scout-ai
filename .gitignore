@@ -51,3 +51,7 @@ logs/
 # OS Files
 .DS_Store
 Thumbs.db
+
+# Large Models and Data
+*.gguf
+mlops/data/

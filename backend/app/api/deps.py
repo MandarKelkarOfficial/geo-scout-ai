@@ -34,8 +34,11 @@ def get_places_service(client: httpx.AsyncClient = Depends(get_httpx_client)) ->
 def get_satellite_service(client: httpx.AsyncClient = Depends(get_httpx_client)) -> SatelliteService:
     return SatelliteService(client)
 
-def get_realestate_service(client: httpx.AsyncClient = Depends(get_httpx_client)) -> RealEstateService:
-    return RealEstateService(client)
+async def get_realestate_service(
+    db: AsyncSession = Depends(get_db),
+    client: httpx.AsyncClient = Depends(get_httpx_client),
+) -> RealEstateService:
+    return RealEstateService(db=db, client=client)
 
 def get_rag_service(client: httpx.AsyncClient = Depends(get_httpx_client)) -> RAGService:
     return RAGService(client)

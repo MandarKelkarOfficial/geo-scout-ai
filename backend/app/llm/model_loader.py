@@ -130,13 +130,47 @@ class OllamaLLMProvider(BaseLLMProvider):
                 parsed = json.loads(stripped)
                 tool_name = parsed.get("name") or parsed.get("function")
                 raw_args = parsed.get("arguments") or parsed.get("parameters") or {}
+                
+                if isinstance(raw_args, str):
+                    try:
+                        raw_args = json.loads(raw_args)
+                    except json.JSONDecodeError:
+                        raw_args = {}
+                        
                 if tool_name and isinstance(raw_args, dict):
                     logger.info("ollama_tool_call_content_json", tool=tool_name, args=raw_args)
                     return {"type": "tool_call", "tool": tool_name, "arguments": raw_args}
             except json.JSONDecodeError:
                 pass
 
-        # --- Path 3: Plain text final answer ---
+        # --- Path 3: Qwen2.5 XML-style tool call ---
+        if "<tool name=" in content:
+            tool_match = re.search(r'<tool name="([^"]+)">([\s\S]*?)</tool>', content)
+            if tool_match:
+                tool_name = tool_match.group(1)
+                params_str = tool_match.group(2)
+                
+                args = {}
+                for param_match in re.finditer(r'<param name="([^"]+)">([\s\S]*?)</param>', params_str):
+                    key = param_match.group(1)
+                    val_str = param_match.group(2).strip()
+                    try:
+                        if "." in val_str:
+                            val = float(val_str)
+                        else:
+                            val = int(val_str)
+                    except ValueError:
+                        if val_str.lower() == "true": val = True
+                        elif val_str.lower() == "false": val = False
+                        elif val_str.lower() == "null": val = None
+                        else: val = val_str
+                        
+                    args[key] = val
+                    
+                logger.info("ollama_tool_call_xml", tool=tool_name, args=args)
+                return {"type": "tool_call", "tool": tool_name, "arguments": args}
+
+        # --- Path 4: Plain text final answer ---
         logger.info("ollama_final_answer", content_len=len(content))
         return {"type": "final_answer", "content": content}
 

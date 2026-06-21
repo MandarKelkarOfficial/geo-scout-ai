@@ -14,9 +14,13 @@ import asyncio
 import json
 import argparse
 import random
+import sys
 import httpx
 from datetime import datetime
 from pathlib import Path
+
+# ── allow DB imports from backend/
+sys.path.insert(0, str(Path(__file__).parent.parent.parent / "backend"))
 
 # ──────────────────────────────────────────────────────────────────────────────
 # INDIAN CITIES & LOCALITIES (expand this list for more variety)
@@ -41,6 +45,21 @@ INDIAN_CITIES = [
     "HSR Layout, Bangalore", "Electronic City, Bangalore", "Jayanagar, Bangalore",
 ]
 
+REAL_ESTATE_QUERY_TEMPLATES = [
+    "Find {bedrooms} BHK apartments in {location}",
+    "Show me properties in {location} under {budget_str}",
+    "What are the real estate options in {location}?",
+    "Search flats for sale in {location}",
+    "I'm looking for a house in {location} with budget {budget_str}",
+    "List properties available in {location}",
+    "{bedrooms} BHK flats in {location}",
+    "Find affordable apartments in {location}",
+    "Real estate listings near {location}",
+    "Show me homes for sale in {location} budget {budget_str}",
+    "What's the property market like in {location}?",
+    "Any flats or houses for sale in {location}?",
+]
+
 AMENITY_CATEGORIES = [
     "restaurant", "hospital", "school", "college", "bank", "atm",
     "pharmacy", "park", "petrol station", "police station", "bus stop",
@@ -61,14 +80,25 @@ IMPORTANT RULES:
 3. Keep answers concise and well-structured. Use markdown formatting for lists and emphasis."""
 
 BACKEND_BASE = "http://127.0.0.1:8000/api/v1"
+DB_URL       = "sqlite+aiosqlite:///./geoai.db"
 
 # ──────────────────────────────────────────────────────────────────────────────
-# API CALLERS
+# API CALLERS  (matched to actual backend routes)
+# Routes:
+#   GET /api/v1/location/geocode?place=<name>           → {latitude, longitude, ...}
+#   GET /api/v1/location/weather?lat=&lon=&label=       → WeatherData
+#   GET /api/v1/location/places?lat=&lon=&category=     → PlacesResponse
+# Real estate has no HTTP route — we query SQLite directly.
 # ──────────────────────────────────────────────────────────────────────────────
 
 async def call_geocode(client: httpx.AsyncClient, location: str) -> dict | None:
+    """Geocode a place name → lat/lon dict."""
     try:
-        r = await client.get(f"{BACKEND_BASE}/geocode", params={"q": location}, timeout=10)
+        r = await client.get(
+            f"{BACKEND_BASE}/location/geocode",
+            params={"place": location},
+            timeout=10,
+        )
         if r.status_code == 200:
             return r.json()
     except Exception as e:
@@ -76,24 +106,102 @@ async def call_geocode(client: httpx.AsyncClient, location: str) -> dict | None:
     return None
 
 
-async def call_weather(client: httpx.AsyncClient, location: str) -> dict | None:
+async def call_weather(client: httpx.AsyncClient, lat: float, lon: float, label: str) -> dict | None:
+    """Fetch weather using lat/lon (after geocoding)."""
     try:
-        r = await client.get(f"{BACKEND_BASE}/weather", params={"location": location}, timeout=15)
+        r = await client.get(
+            f"{BACKEND_BASE}/location/weather",
+            params={"lat": lat, "lon": lon, "label": label},
+            timeout=15,
+        )
         if r.status_code == 200:
             return r.json()
     except Exception as e:
-        print(f"  [weather error] {location}: {e}")
+        print(f"  [weather error] {label}: {e}")
     return None
 
 
-async def call_places(client: httpx.AsyncClient, location: str, category: str) -> dict | None:
+async def call_places(client: httpx.AsyncClient, lat: float, lon: float, category: str, location_label: str) -> dict | None:
+    """Fetch nearby places using lat/lon (after geocoding)."""
     try:
-        r = await client.get(f"{BACKEND_BASE}/places", params={"location": location, "category": category}, timeout=20)
+        r = await client.get(
+            f"{BACKEND_BASE}/location/places",
+            params={"lat": lat, "lon": lon, "category": category},
+            timeout=20,
+        )
         if r.status_code == 200:
             return r.json()
     except Exception as e:
-        print(f"  [places error] {location}/{category}: {e}")
+        print(f"  [places error] {location_label}/{category}: {e}")
     return None
+
+
+async def call_real_estate_db(location: str, max_budget: float | None = None, limit: int = 8) -> dict | None:
+    """Query real estate listings directly from SQLite DB (no HTTP route exists)."""
+    try:
+        from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
+        from sqlalchemy import select, and_
+        from app.db.models import RealEstateListingCache
+
+        engine = create_async_engine(DB_URL, echo=False)
+        SessionFactory = async_sessionmaker(engine, expire_on_commit=False)
+
+        async with SessionFactory() as session:
+            # Try exact match first
+            conditions = [RealEstateListingCache.location_label.ilike(f"%{location}%")]
+            if max_budget:
+                conditions.append(RealEstateListingCache.price <= max_budget)
+
+            stmt = (
+                select(RealEstateListingCache)
+                .where(and_(*conditions))
+                .order_by(RealEstateListingCache.price)
+                .limit(limit)
+            )
+            result = await session.execute(stmt)
+            rows = list(result.scalars().all())
+
+            # Fuzzy word-by-word fallback
+            if not rows:
+                for word in [w for w in location.split() if len(w) > 2]:
+                    conditions2 = [RealEstateListingCache.location_label.ilike(f"%{word}%")]
+                    if max_budget:
+                        conditions2.append(RealEstateListingCache.price <= max_budget)
+                    stmt2 = (
+                        select(RealEstateListingCache)
+                        .where(and_(*conditions2))
+                        .order_by(RealEstateListingCache.price)
+                        .limit(limit)
+                    )
+                    result2 = await session.execute(stmt2)
+                    rows = list(result2.scalars().all())
+                    if rows:
+                        break
+
+        await engine.dispose()
+
+        if not rows:
+            return None
+
+        listings = [
+            {
+                "title":        r.title,
+                "price":        r.price,
+                "currency":     r.currency,
+                "area_sqft":    r.area_sqft,
+                "location":     r.location_label,
+                "dealer_name":  r.dealer_name,
+                "dealer_contact": r.dealer_contact,
+            }
+            for r in rows
+        ]
+        avg = sum(l["price"] for l in listings) / len(listings)
+        return {"listings": listings, "average_price": avg}
+
+    except Exception as e:
+        print(f"  [realestate db error] {location}: {e}")
+        return None
+
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -185,6 +293,48 @@ def synthesize_places_answer(data: dict, category: str) -> str:
     return "\n".join(lines)
 
 
+def synthesize_real_estate_answer(data: dict, location: str) -> str:
+    listings = data.get("listings", [])
+    avg = data.get("average_price")
+    if not listings:
+        return f"I couldn't find any property listings in **{location}** at the moment. The market may not have current listings available."
+
+    lines = [f"**Property Listings in {location}**\n"]
+    for idx, p in enumerate(listings[:6], 1):
+        title   = p.get("title", "Property")
+        price   = p.get("price", 0)
+        area    = p.get("area_sqft")
+        loc     = p.get("location", location)
+        dealer  = p.get("dealer_name")
+
+        # Format price in Crore / Lakh
+        if price >= 1e7:
+            price_str = f"₹{price/1e7:.2f} Cr"
+        elif price >= 1e5:
+            price_str = f"₹{price/1e5:.1f} L"
+        else:
+            price_str = f"₹{price:,.0f}"
+
+        line = f"{idx}. **{title}** — {price_str}"
+        if area:
+            line += f" | {area:.0f} sq.ft"
+        line += f"\n   📍 {loc}"
+        if dealer:
+            line += f" | Agent: {dealer}"
+        lines.append(line)
+
+    if avg:
+        if avg >= 1e7:
+            avg_str = f"₹{avg/1e7:.2f} Cr"
+        elif avg >= 1e5:
+            avg_str = f"₹{avg/1e5:.1f} L"
+        else:
+            avg_str = f"₹{avg:,.0f}"
+        lines.append(f"\n📊 **Average Price:** {avg_str}")
+
+    return "\n".join(lines)
+
+
 def synthesize_geocode_answer(data: dict) -> str:
     name = data.get("display_name", "")
     lat = data.get("latitude")
@@ -223,7 +373,13 @@ def build_chat_example(user_query: str, tool_name: str, tool_args: dict,
 
 async def generate_weather_example(client: httpx.AsyncClient, city: str) -> dict | None:
     query = random.choice(WEATHER_QUERIES).format(city=city)
-    data = await call_weather(client, city)
+    # Step 1: geocode to get lat/lon
+    geo = await call_geocode(client, city)
+    if not geo:
+        return None
+    lat, lon = geo["latitude"], geo["longitude"]
+    # Step 2: fetch weather with lat/lon
+    data = await call_weather(client, lat, lon, label=city)
     if not data:
         return None
     answer = synthesize_weather_answer(data)
@@ -239,7 +395,13 @@ async def generate_weather_example(client: httpx.AsyncClient, city: str) -> dict
 async def generate_places_example(client: httpx.AsyncClient, city: str) -> dict | None:
     category = random.choice(AMENITY_CATEGORIES)
     query = random.choice(PLACES_QUERIES).format(city=city, category=category)
-    data = await call_places(client, city, category)
+    # Step 1: geocode to get lat/lon
+    geo = await call_geocode(client, city)
+    if not geo:
+        return None
+    lat, lon = geo["latitude"], geo["longitude"]
+    # Step 2: fetch nearby places with lat/lon
+    data = await call_places(client, lat, lon, category, location_label=city)
     if not data:
         return None
     answer = synthesize_places_answer(data, category)
@@ -249,6 +411,44 @@ async def generate_places_example(client: httpx.AsyncClient, city: str) -> dict 
         tool_args={"location": city, "category": category},
         tool_result=data,
         final_answer=answer
+    )
+
+
+async def generate_real_estate_example(client: httpx.AsyncClient,
+                                        location: str,
+                                        bedrooms: int | None = None,
+                                        max_budget: float | None = None) -> dict | None:
+    """Generate a search_real_estate training example."""
+    bedrooms_str = str(bedrooms) if bedrooms else random.choice(["2", "3", "4", ""])
+
+    # Build a human-readable budget string
+    if max_budget:
+        if max_budget >= 1e7:
+            budget_str = f"\u20b9{max_budget/1e7:.0f} Cr"
+        else:
+            budget_str = f"\u20b9{max_budget/1e5:.0f} L"
+    else:
+        budget_str = "any budget"
+
+    template = random.choice(REAL_ESTATE_QUERY_TEMPLATES)
+    query = template.format(
+        location=location,
+        bedrooms=bedrooms_str or "2",
+        budget_str=budget_str,
+    )
+
+    # Query DB directly (no HTTP route exists for real estate)
+    data = await call_real_estate_db(location, max_budget)
+    if not data:
+        return None
+
+    answer = synthesize_real_estate_answer(data, location)
+    return build_chat_example(
+        user_query=query,
+        tool_name="search_real_estate",
+        tool_args={"location": location, "max_budget": max_budget},
+        tool_result=data,
+        final_answer=answer,
     )
 
 
@@ -271,6 +471,25 @@ async def generate_geocode_example(client: httpx.AsyncClient, city: str) -> dict
 # MAIN GENERATION LOOP
 # ──────────────────────────────────────────────────────────────────────────────
 
+# Cities covered by the Kaggle real estate data
+KAGGLE_CITIES = [
+    "Gurgaon", "Gurugram", "DLF", "Sohna",       # Gurgaon dataset
+    "Hyderabad", "Secunderabad", "Kompally",        # Hyderabad dataset
+    "Kolkata", "Kolkata South", "Amtala",           # Kolkata dataset
+    "Mumbai", "Navi Mumbai", "Thane", "Karjat",     # Mumbai dataset
+]
+
+# Budget bands in INR for real-estate query variety
+BUDGET_BANDS = [
+    None,         # no budget filter
+    2_000_000,    # 20 L
+    5_000_000,    # 50 L
+    10_000_000,   # 1 Cr
+    20_000_000,   # 2 Cr
+    50_000_000,   # 5 Cr
+]
+
+
 async def generate_dataset(output_path: str, count: int):
     print(f"\n🚀 GeoAI Training Data Generator")
     print(f"   Target: {count} examples → {output_path}")
@@ -279,11 +498,12 @@ async def generate_dataset(output_path: str, count: int):
     examples = []
     skipped = 0
 
-    # Distribute across tool types: 40% weather, 40% places, 20% geocode
+    # Distribute across tool types: 30% weather, 30% places, 20% geocode, 20% realestate
     targets = {
-        "weather": int(count * 0.40),
-        "places": int(count * 0.40),
-        "geocode": int(count * 0.20),
+        "weather":     int(count * 0.30),
+        "places":      int(count * 0.30),
+        "geocode":     int(count * 0.20),
+        "realestate":  int(count * 0.20),
     }
 
     async with httpx.AsyncClient() as client:
@@ -325,6 +545,21 @@ async def generate_dataset(output_path: str, count: int):
             else:
                 skipped += 1
             await asyncio.sleep(1.0)  # Nominatim: max 1 req/sec
+
+        # ── Real-estate examples ──────────────────────────────────────────────
+        print(f"\n🏠 Generating {targets['realestate']} real-estate examples...")
+        re_cities = random.choices(KAGGLE_CITIES + INDIAN_CITIES, k=targets["realestate"])
+        for i, city in enumerate(re_cities):
+            budget = random.choice(BUDGET_BANDS)
+            bedrooms = random.choice([None, 1, 2, 3, 4])
+            ex = await generate_real_estate_example(client, city, bedrooms, budget)
+            if ex:
+                examples.append(ex)
+                if (i + 1) % 10 == 0:
+                    print(f"   ✅ {i+1}/{targets['realestate']} real-estate examples done")
+            else:
+                skipped += 1
+            await asyncio.sleep(0.2)
 
     # Shuffle and save
     random.shuffle(examples)
