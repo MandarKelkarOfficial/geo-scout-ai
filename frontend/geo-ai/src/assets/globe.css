@@ -1,0 +1,148 @@
+/* ============================
+   GeoAI Globe — themeable, layered
+   ============================ */
+
+:root {
+  /* Accent theme — change these two values to retheme the whole globe */
+  --geoai-accent-rgb: 234, 88, 12;   /* dark orange (default) */
+  --geoai-accent-hue: 340deg;        /* hue-rotate to tint the continent map to match */
+}
+
+.css-globe-container {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* The sphere */
+.css-globe {
+  position: relative;
+  flex-shrink: 0;
+  width: 760px;
+  height: 760px;
+  margin-top: 0;
+  margin-right: 0;
+  border-radius: 50%;
+  overflow: hidden;
+
+  /* faint core glow so the sphere doesn't look flat */
+  background: radial-gradient(
+    circle at 32% 28%,
+    rgba(var(--geoai-accent-rgb), 0.10),
+    transparent 60%
+  );
+
+  /* rim outline + outer glow, drawn with box-shadow so it isn't clipped by overflow:hidden */
+  /* Base clip-path so we can animate it later. Expanded bounds to prevent clipping the outer shadow */
+  box-shadow:
+    inset 0 0 0 1px rgba(var(--geoai-accent-rgb), 0.35),
+    0 0 160px rgba(var(--geoai-accent-rgb), 0.12);
+  clip-path: inset(-300px -300px -300px -300px);
+  animation: zoomAndSlice 3s cubic-bezier(0.4, 0, 0.2, 1) 2s forwards;
+}
+
+@keyframes zoomAndSlice {
+  0% {
+    transform: scale(1) translateY(0);
+    clip-path: inset(-300px -300px -300px -300px);
+  }
+  40% {
+    /* Step 1: Become large and move down */
+    transform: scale(1.6) translateY(160px);
+    clip-path: inset(-300px -300px -300px -300px);
+  }
+  100% {
+    /* Step 2: Slice into a semi-circle dome, but keep outer glow safe on top/sides */
+    transform: scale(1.6) translateY(160px);
+    clip-path: inset(-300px -300px 50% -300px);
+  }
+}
+
+/* Continents — tinted world map, low opacity, behind the grid */
+.css-globe__continents {
+  position: absolute;
+  inset: -6%;
+  background-image: url('https://upload.wikimedia.org/wikipedia/commons/8/80/World_map_-_low_resolution.svg');
+  background-repeat: repeat-x;
+  background-size: 1700px 850px;
+  background-position: -1150px -200px; /* Start at Australia */
+  filter: invert(0.9) sepia(1) saturate(6) hue-rotate(var(--geoai-accent-hue)) brightness(0.65);
+  opacity: 0.22;
+  mix-blend-mode: screen;
+  
+  /* Spin to India */
+  animation: spinMap 2s cubic-bezier(0.2, 0.8, 0.2, 1) 0.2s forwards;
+}
+
+@keyframes spinMap {
+  0% { background-position: -1150px -200px; }
+  100% { background-position: -760px -60px; }
+}
+
+/* Grid wrapper — rotates slowly, sits above continents */
+.css-globe__grid {
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  animation: globeRotate 140s linear infinite;
+}
+
+/* Latitude rings (horizontal bands) */
+.css-globe__lat {
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  background-image: repeating-linear-gradient(
+    to bottom,
+    transparent 0,
+    transparent calc(100% / 9 - 1px),
+    rgba(var(--geoai-accent-rgb), 0.14) calc(100% / 9 - 1px),
+    rgba(var(--geoai-accent-rgb), 0.14) calc(100% / 9)
+  );
+  mask-image: radial-gradient(circle, #000 99%, transparent 100%);
+  -webkit-mask-image: radial-gradient(circle, #000 99%, transparent 100%);
+}
+
+/* Longitude meridians (vertical ellipses, concentric) */
+.css-globe__long {
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  box-shadow: inset 0 0 0 1px rgba(var(--geoai-accent-rgb), 0.14);
+}
+.css-globe__long--1 { transform: scaleX(0.7); }
+.css-globe__long--2 { transform: scaleX(0.38); }
+
+@keyframes globeRotate {
+  from { transform: rotate(0deg); }
+  to   { transform: rotate(360deg); }
+}
+
+/* Responsive scaling */
+@media (max-width: 1280px) {
+  .css-globe {
+    width: 560px;
+    height: 560px;
+    margin-top: 0;
+    margin-right: 0;
+  }
+}
+
+@media (max-width: 768px) {
+  .css-globe {
+    width: 380px;
+    height: 380px;
+    margin-top: 0;
+    margin-right: 0;
+  }
+  .css-globe__continents { opacity: 0.14; }
+}
+
+@media (max-width: 480px) {
+  .css-globe-container { display: none; }
+}

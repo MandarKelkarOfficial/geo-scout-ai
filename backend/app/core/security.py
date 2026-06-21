@@ -1,13 +1,14 @@
-from fastapi import Header, HTTPException, status
+from datetime import datetime, timedelta, timezone
+from fastapi import Cookie, Header, HTTPException, status
 from passlib.context import CryptContext
+from jose import JWTError, jwt
 from app.core.config import get_settings
+from typing import Optional
 
 settings = get_settings()
 
 def verify_api_key(x_api_key: str | None = Header(default=None)):
     if settings.ENVIRONMENT == "production":
-        # In a real application, check against a secure key or database
-        # Using a dummy check for now
         expected_key = getattr(settings, "API_KEY", "geoai-secret-key")
         if x_api_key != expected_key:
             raise HTTPException(
@@ -23,3 +24,18 @@ def hash_password(password: str) -> str:
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
     return pwd_context.verify(plain_password, hashed_password)
+
+def create_access_token(user_id: int) -> str:
+    expire = datetime.now(timezone.utc) + timedelta(days=settings.JWT_EXPIRE_DAYS)
+    payload = {"sub": str(user_id), "exp": expire}
+    return jwt.encode(payload, settings.JWT_SECRET_KEY, algorithm=settings.JWT_ALGORITHM)
+
+def decode_access_token(token: str) -> Optional[int]:
+    try:
+        payload = jwt.decode(token, settings.JWT_SECRET_KEY, algorithms=[settings.JWT_ALGORITHM])
+        user_id = payload.get("sub")
+        if user_id is None:
+            return None
+        return int(user_id)
+    except JWTError:
+        return None

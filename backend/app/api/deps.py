@@ -1,5 +1,5 @@
 import httpx
-from fastapi import Depends
+from fastapi import Depends, Request, HTTPException, status
 from app.db.session import get_db
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.llm.model_loader import get_llm_provider
@@ -11,6 +11,10 @@ from app.services.realestate import RealEstateService
 from app.services.rag import RAGService
 from app.llm.agent import GeoAIAgent
 from app.core.config import get_settings
+from app.core.security import decode_access_token
+from app.db import crud
+from app.db.models import User
+from typing import Optional
 
 settings = get_settings()
 
@@ -46,3 +50,26 @@ def get_agent(
 ) -> GeoAIAgent:
     llm = get_llm_provider()
     return GeoAIAgent(llm, geocoding, weather, places, satellite, realestate, rag)
+
+async def get_optional_user(
+    request: Request,
+    db: AsyncSession = Depends(get_db)
+) -> Optional[User]:
+    """Returns the current user if authenticated, otherwise None (guest mode)."""
+    token = request.cookies.get("access_token")
+    if not token:
+        return None
+    user_id = decode_access_token(token)
+    if not user_id:
+        return None
+    return await crud.get_user_by_id(db, user_id)
+
+async def get_current_user(
+    request: Request,
+    db: AsyncSession = Depends(get_db)
+) -> User:
+    """Returns the current user or raises 401."""
+    user = await get_optional_user(request, db)
+    if not user:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")
+    return user

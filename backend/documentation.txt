@@ -1,82 +1,190 @@
-GeoAI Backend - File Documentation
-==================================
+GeoAI Backend - System & Codebase Documentation
+==============================================
 
-ROOT DIRECTORY
---------------
-- requirements.txt: Lists all the Python package dependencies needed for the project (e.g., FastAPI, Uvicorn, SQLAlchemy, Pydantic, httpx).
-- README.md: Provides a high-level overview of the project, features, and folder architecture.
-- setup.md: Step-by-step instructions for creating the virtual environment, running the server, and executing tests.
-- .env: Environment variables file for local development configuration.
+1. OVERVIEW & ARCHITECTURE
+--------------------------
+The GeoAI backend is an asynchronous REST API built with FastAPI and Python 3.11+. It acts as a Backend-for-Frontend (BFF) orchestrator, handling authentication, user state, database persistence, and LLM-agent coordination.
 
-alembic/
---------
-- alembic.ini: Alembic configuration file for database migrations.
-- env.py: Environment configuration for Alembic, allowing it to run asynchronous migrations using the `aiosqlite` driver.
-- versions/: Directory containing sequential database migration scripts (e.g., initial schema generation, data seeding).
+Architecture Layers:
+1. API Router Layer (`app/api/`): Exposes REST endpoints, parses requests using Pydantic, and manages dependency injection.
+2. Service Layer (`app/services/`): Communicates with external APIs (Open-Meteo, Nominatim, Overpass OSM) and local JSON/DB resources.
+3. LLM Agent Layer (`app/llm/`): Coordinates LLM prompt template generation, agent execution loops, tool calling, and text synthesis.
+4. Database Layer (`app/db/`): Manages async database persistence (SQLite via `aiosqlite` and SQLAlchemy 2.0).
+5. Core Configuration & Security (`app/core/`): Handles environment settings, token validation, password hashing, and CORS configurations.
 
-app/
-----
-- main.py: The main FastAPI application entry point. It sets up CORS, registers global exception handlers, and mounts all the API routers.
-- __init__.py: Marks the directory as a Python package.
+2. SETUP & DEPENDENCIES
+-----------------------
+Dependencies are declared in `requirements.txt`:
+- `fastapi` & `uvicorn`: Web frame and ASGI server.
+- `sqlalchemy[asyncio]` & `aiosqlite`: Async ORM and SQLite database driver.
+- `alembic`: Database migrations management.
+- `passlib[bcrypt]` & `bcrypt`: Utility library for secure password hashing.
+- `python-jose[cryptography]`: JWT generation, signing, and decryption.
+- `pydantic` & `pydantic-settings`: Data validation and settings parsed from environment variables.
+- `httpx`: Async HTTP requests client.
+- `pytest`, `pytest-asyncio`, & `respx`: Testing suite and HTTP mock frameworks.
 
-app/core/
----------
-- config.py: Centralized configuration management using `pydantic-settings`. Loads values from `.env` and exposes them via a cached `get_settings()` function.
-- security.py: Contains security dependencies (API key verification) and utility functions for password hashing and verification using `passlib` with `bcrypt`.
+3. ENVIRONMENT VARIABLES (`.env`)
+--------------------------------
+The file `backend/.env` is read on startup:
+- `ENVIRONMENT`: "development" or "production". If set to production, API key verification is enforced.
+- `DATABASE_URL`: Connection string (e.g. `sqlite+aiosqlite:///./geoai.db`).
+- `JWT_SECRET_KEY`: Secret string used to sign JWT access token payloads.
+- `JWT_ALGORITHM`: Crypto algorithm used to encode/decode JWTs (default: HS256).
+- `JWT_EXPIRE_DAYS`: Days before JWT token expires (default: 7).
+- `FRONTEND_ORIGIN`: Allowed CORS URL origin (e.g. `http://localhost:5173`).
 
-app/db/
--------
-- session.py: Configures the asynchronous SQLAlchemy engine and provides the `get_db` session dependency. The project currently uses an async **SQLite** database via the `aiosqlite` driver.
-- models.py: Contains the full set of SQLAlchemy 2.0 declarative models defining the database schema: `User`, `ChatSession`, `QueryLog`, `SavedLocation`, and `RealEstateListingCache`.
-- crud.py: Contains asynchronous database operations (CRUD: Create, Read, Update, Delete) to interact with the database tables.
+4. DATABASE MODELS & MIGRATIONS (`app/db/`)
+------------------------------------------
+The database is structured to be compatible with PostgreSQL for future deployments. All models inherit from the declarative `Base` class and use SQLAlchemy 2.0 mapping annotations.
 
-app/schemas/
-------------
-- user.py: Pydantic models for user registration and authentication handling (`UserCreate`, `UserResponse`).
-- location.py: Pydantic models for saving locations (`SavedLocationCreate`, `SavedLocationResponse`).
-- chat.py: Pydantic models for chat sessions and query logs.
-- query.py: Pydantic models (`QueryRequest`, `QueryResponse`) defining the shape of data sent to and received from the agent `/query` endpoint.
-- response.py: Pydantic models (`GeocodingResult`, `WeatherData`, `PlaceResult`, etc.) representing the structured data returned by various backend services.
+Mixins:
+- `TimestampMixin`: Injects `created_at` and `updated_at` timestamps defaulted to current UTC database time.
 
-app/utils/
-----------
-- exceptions.py: Custom application exception classes (`ExternalAPIError`, `LocationNotFoundError`) to handle specific failure scenarios cleanly.
-- geo.py: Geographic utility functions, such as the `haversine` formula to calculate distances between coordinates.
+Models:
+1. `User` (Table: `users`):
+   - `id`: Integer (Primary Key, autoincremented).
+   - `email`: String (Unique, Indexed, Nullable=False).
+   - `hashed_password`: String (Nullable=False).
+   - `full_name`: String (Nullable=True).
+   - `is_active`: Boolean (Default: True).
+   - Relationships: `sessions` (one-to-many with `ChatSession`), `saved_locations` (one-to-many with `SavedLocation`).
 
-app/services/
--------------
-- geocoding.py: Service that calls the external Nominatim API to convert location names into latitude/longitude coordinates.
-- weather.py: Service that fetches current weather data and forecasts from the Open-Meteo API.
-- places.py: Service that searches for nearby amenities (like hospitals or restaurants) using the Overpass OSM API.
-- satellite.py: A stub service placeholder for fetching satellite imagery (planned for Sentinel Hub integration).
-- realestate.py: A mock data provider service that filters property listings based on location and budget from a local JSON file.
-- rag.py: A stub service placeholder for future Retrieval-Augmented Generation (RAG) and local vector database search.
-- data/sample_listings.json: A static JSON file containing mock real estate listings used by `realestate.py`.
+2. `ChatSession` (Table: `chat_sessions`):
+   - `id`: Integer (Primary Key).
+   - `session_token`: String (Unique, Indexed, Default: UUID4 string) used in routes.
+   - `user_id`: Integer (Foreign Key -> `users.id`, Nullable=True for guest conversations).
+   - `title`: String (Nullable=True).
+   - `share_token`: String (Unique, Indexed, Nullable=True, UUID4 string) generated on-demand.
+   - Relationships: `user` (many-to-one), `query_logs` (one-to-many with `QueryLog`, cascade delete).
 
-app/llm/
---------
-- tool_schema.py: Contains the JSON schema definitions of all available tools. These definitions tell the LLM what functions it can call.
-- model_loader.py: Defines abstract base classes for LLM providers. Includes `MockLLMProvider`, a mock implementation that simulates LLM reasoning and tool calls using regex text parsing.
-- agent.py: The core `GeoAIAgent` orchestrator. It passes queries to the LLM, executes requested tools, injects the results back into the conversation, and generates a final cohesive answer.
-- prompts/system_prompt.txt: The baseline system instructions that govern how the GeoAI agent behaves.
+3. `QueryLog` (Table: `query_logs`):
+   - `id`: Integer (Primary Key).
+   - `session_id`: Integer (Foreign Key -> `chat_sessions.id`, Nullable=False).
+   - `role`: String (Nullable=False) - 'user' or 'assistant'.
+   - `query_text`: Text (Nullable=False) - the message text inputted by the user.
+   - `response_text`: Text (Nullable=False, Default: "") - the assistant's final response text.
+   - `tools_used`: JSON list of strings (Default: empty list).
+   - `latency_ms`: Integer (Nullable=True).
+   - `created_at`: DateTime (Default: current timestamp).
+   - Relationships: `session` (many-to-one).
 
-app/api/
---------
-- deps.py: FastAPI dependency injection configuration. Wires up HTTP clients, services, and the agent, making them available to the route handlers.
+4. `SavedLocation` (Table: `saved_locations`):
+   - `id`: Integer (Primary Key).
+   - `user_id`: Integer (Foreign Key -> `users.id`, Nullable=False).
+   - `label`: String (Nullable=False).
+   - `place_name`: String (Nullable=False).
+   - `latitude`: Float (Nullable=False).
+   - `longitude`: Float (Nullable=False).
+   - `category`: String (Nullable=True).
+   - Indexes: Combined index `ix_saved_locations_coords` on `(latitude, longitude)`.
 
-app/api/v1/routes/
-------------------
-- health.py: Contains the basic `/api/v1/health` endpoint used to check if the server is running.
-- location.py: Defines independent GET endpoints (`/location/geocode`, `/location/weather`, `/location/places`) that allow clients to bypass the LLM and query services directly.
-- query.py: Defines the main POST `/api/v1/query` endpoint where users submit natural language questions to the GeoAIAgent.
+5. `RealEstateListingCache` (Table: `real_estate_listings`):
+   - `id`: Integer (Primary Key).
+   - `title`: String (Nullable=False).
+   - `price`: Float (Nullable=False).
+   - `currency`: String (Default: "INR").
+   - `area_sqft`: Float (Nullable=True).
+   - `location_label`: String (Indexed, Nullable=False).
+   - `latitude` / `longitude`: Float (Nullable=True).
+   - `dealer_name` / `dealer_contact`: String (Nullable=True).
+   - `source`: String (Default: "manual").
 
-tests/
-------
-Contains all unit and integration tests written in Pytest.
-- db/test_models.py: Tests database model creation and insertion using an in-memory async SQLite database.
-- db/test_crud.py: Tests asynchronous CRUD operations against the in-memory SQLite database.
-- db/test_migrations.py: Tests the execution of Alembic database migrations.
-- core/test_security.py: Validates that the API key verification correctly bypasses in development and enforces in production.
-- api/v1/routes/*.py: Tests the API endpoints using an async HTTP client to ensure proper request routing and response shapes.
-- services/*.py: Unit tests for all services. Uses the `respx` library to mock external network calls (e.g., to Open-Meteo and Nominatim) to test both success and error states.
-- llm/*.py: Tests the `MockLLMProvider` logic and the orchestrator loop of the `GeoAIAgent`.
+Alembic Migrations:
+- Migration files are stored under `alembic/versions/`.
+- Apply migrations: `alembic upgrade head`.
+- Auto-generate migrations: `alembic revision --autogenerate -m "description"`.
+
+5. SECURITY & COOKIE AUTHENTICATION FLOW
+----------------------------------------
+- Password Hashing: Completed inside `app/core/security.py` using `passlib` with `bcrypt`.
+- JWT Token Payload: Contains `sub` (carrying user ID string) and `exp` (UTC expiration datetime).
+- Cookie Setup: During `/auth/login`, access token is written to an `access_token` cookie:
+  - `httponly=True` (prevents cross-site scripting/XSS token thefts).
+  - `samesite="lax"` (protects against CSRF).
+  - `secure=False` (set to True in production to force HTTPS delivery).
+  - `max_age=604800` (7 days duration).
+- CORS Configuration: Wired in `app/main.py`. The backend allows requests *only* from the specified `FRONTEND_ORIGIN` with credentials enabled (`allow_credentials=True`). Wildcards (`*`) are disallowed to enable cookie forwarding.
+
+6. FASTAPI DEPENDENCY INJECTION (`app/api/deps.py`)
+---------------------------------------------------
+- `get_db`: Yields an async SQL Session instance per request.
+- `get_optional_user`: Checks incoming request cookies for `access_token`. Decodes JWT payload and queries database for the user. Returns user object or `None` if invalid/missing (allowing guest routing).
+- `get_current_user`: Invokes `get_optional_user`. If it returns `None`, raises an HTTP 401 Unauthorized exception.
+- Service Resolvers: Instantiates Nominatim (`get_geocoding_service`), Weather (`get_weather_service`), Places (`get_places_service`), RAG (`get_rag_service`), and LLM Agent (`get_agent`).
+
+7. REST API ENDPOINTS & CONTRACTS
+---------------------------------
+
+A. Authentication (`/api/v1/auth`)
+- `POST /register`: Registers a new user.
+  - Body: `UserCreate` (email: string, password: minimum 8 characters, full_name: optional string).
+  - Response (201): `UserRead` (id, email, full_name, is_active, created_at).
+- `POST /login`: Verifies password and sets HttpOnly `access_token` cookie.
+  - Body: `LoginRequest` (email, password).
+  - Response (200): Success message and `UserRead` details.
+- `POST /logout`: Clears the `access_token` cookie.
+  - Response (200): Success message.
+- `GET /me`: Returns the currently logged in user profile.
+  - Requires: Valid `access_token` cookie.
+  - Response (200): `UserRead` object.
+- `PATCH /me`: Updates the display name of the current user.
+  - Body: `UserUpdate` (full_name: optional string).
+  - Response (200): Updated `UserRead` object.
+
+B. Sessions & Share Routing (`/api/v1`)
+- `GET /sessions`: Returns list of all chat sessions created by the authenticated user.
+  - Response (200): List of `ChatSessionRead` (id, session_token, user_id, title, share_token, created_at).
+- `DELETE /sessions/{session_id}`: Deletes a session and cascading query logs.
+  - Response (204): Empty response.
+- `GET /sessions/{session_id}/history`: Returns query logs in chronological order.
+  - Response (200): List of `QueryLogRead` (id, session_id, role, query_text, response_text, tools_used, latency_ms, created_at).
+- `POST /sessions/{session_id}/share`: Generates and sets a unique share token for the session.
+  - Response (200): `{ "share_token": "uuid-string" }`.
+- `PATCH /sessions/{session_id}/rename`: Renames the title of the session.
+  - Body: `RenameRequest` (title: string).
+  - Response (200): Updated `ChatSessionRead` object.
+- `GET /share/{share_token}`: Public endpoint (no login required) to load a shared chat logs.
+  - Response (200): `SharedChatResponse` (title, messages: list of `QueryLogRead`).
+
+C. Natural Language Queries (`/api/v1/query`)
+- `POST /query`: Processes conversational queries using the LLM agent orchestrator.
+  - Body: `QueryRequest` (query: string, session_token: optional string).
+  - Logic:
+    1. Looks up the session via `session_token`.
+    2. If session not found, creates a new `ChatSession` mapping it to the logged-in user (if authenticated) or anonymous user (if guest).
+    3. Persists user query to database: `QueryLog` with `role="user"`.
+    4. Auto-titles the session using the first 60 characters of the query if no title exists.
+    5. Calls LLM Agent runner.
+    6. Persists agent response to database: `QueryLog` with `role="assistant"` listing tools run and API latency.
+  - Response (200): `QueryResponse` (answer: string, data: optional dictionary, tools_used: list of strings, session_token: string).
+
+D. Independent Tools (`/api/v1/location`)
+- Endpoints allow clients to bypass the agent orchestrator and call services directly:
+  - `GET /geocode`: Converts place name to coordinates.
+  - `GET /weather`: Fetches weather metrics.
+  - `GET /places`: Searches near amenities.
+
+E. Service Status Verification
+- `GET /health`: Returns connection verification dictionary status code (`{"status": "ok"}`).
+
+8. INTEGRATED SERVICES & AGENT LOGIC
+------------------------------------
+- Geocoding Service (`app/services/geocoding.py`): Fetches Nominatim JSON data. Parses coordinate lat/lon and details.
+- Weather Service (`app/services/weather.py`): Calls Open-Meteo API for forecast variables (temperature, wind, precipitation).
+- Places Service (`app/services/places.py`): Dispatches requests to OpenStreetMap Overpass Interpreter. Searches for specified category nodes (hospitals, parks, etc.) in a given radius.
+- Real Estate Service (`app/services/realestate.py`): Filters property cache details.
+- GeoAIAgent (`app/llm/agent.py`): Parses tool calling actions (defined in schemas inside `app/llm/tool_schema.py`). Loop pattern:
+  1. Requests prompt routing structure from LLM.
+  2. Resolves tool action requests (e.g. coordinates lookup followed by weather lookup).
+  3. Returns synthesized reply answering the user query.
+
+9. TESTING FRAMEWORK
+--------------------
+Tests are run using pytest from the root folder:
+`pytest tests/`
+
+Test Coverage Areas:
+- Database CRUD tests (`tests/db/test_crud.py`): Tests registers, profile updates, and active session deletions using in-memory SQLite instances.
+- Route tests (`tests/api/v1/routes/`): Wires test HTTP client with mock cookies, executing login and shared session fetches.
+- Integration tests (`tests/services/`): Employs `respx` to stub third-party APIs (Open-Meteo, Nominatim) ensuring reliable network-free testing.

@@ -2,12 +2,43 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <link rel="icon" type="image/svg+xml" href="/vite.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-        <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
-    <title>geo-ai</title>
+    <meta name="description" content="GeoAI – Ask anything about any place on Earth. Powered by AI." />
+    <title>GeoAI</title>
+    <!-- Google Fonts: Inter -->
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet" />
+    <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined" rel="stylesheet" />
+    <!-- Tailwind CSS CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+      tailwind.config = {
+        theme: {
+          extend: {
+            fontFamily: {
+              sans: ['Inter', 'sans-serif'],
+            },
+            colors: {
+              surface: '#1a1a1a',
+              border: '#2a2a2a',
+              muted: '#8a8a8a',
+              accent: '#d97706',
+              'accent-hover': '#b45309',
+              'user-bubble': '#1e3a5f',
+            },
+            backgroundColor: {
+              base: '#0f0f0f',
+              surface: '#1a1a1a',
+              'surface-hover': '#222222',
+            },
+          },
+        },
+      }
+    </script>
   </head>
-  <body>
+  <body class="bg-base font-sans text-gray-100 antialiased">
     <div id="root"></div>
     <script type="module" src="/src/main.jsx"></script>
   </body>

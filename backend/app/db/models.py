@@ -34,6 +34,7 @@ class ChatSession(TimestampMixin, Base):
     session_token: Mapped[str] = mapped_column(String, unique=True, index=True, default=lambda: str(uuid4()))
     user_id: Mapped[Optional[int]] = mapped_column(ForeignKey("users.id"))
     title: Mapped[Optional[str]] = mapped_column(String)
+    share_token: Mapped[Optional[str]] = mapped_column(String, unique=True, index=True, nullable=True)
 
     user: Mapped[Optional["User"]] = relationship("User", back_populates="sessions")
     query_logs: Mapped[List["QueryLog"]] = relationship("QueryLog", back_populates="session", cascade="all, delete-orphan")
@@ -43,8 +44,9 @@ class QueryLog(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     session_id: Mapped[int] = mapped_column(ForeignKey("chat_sessions.id"), nullable=False)
+    role: Mapped[str] = mapped_column(String, nullable=False, default="assistant")  # 'user' | 'assistant'
     query_text: Mapped[str] = mapped_column(Text, nullable=False)
-    response_text: Mapped[str] = mapped_column(Text, nullable=False)
+    response_text: Mapped[str] = mapped_column(Text, nullable=False, default="")
     tools_used: Mapped[Optional[list[str]]] = mapped_column(JSON, default=list)
     latency_ms: Mapped[Optional[int]] = mapped_column(Integer)
     created_at: Mapped[datetime] = mapped_column(server_default=func.now())

@@ -36,6 +36,10 @@ out/
 *.db
 *.sqlite3
 
+# Logs
+*.log
+logs/
+
 # IDEs and Editors
 .vscode/
 .idea/

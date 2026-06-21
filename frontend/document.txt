@@ -1,0 +1,132 @@
+GeoAI Frontend - System & Codebase Documentation
+===============================================
+
+1. OVERVIEW
+-----------
+The GeoAI frontend is a premium, minimalist, single-page application (SPA) built using React 19 and Vite. The design is heavily inspired by modern clean layouts (like Anthropic Claude), using a dark color scheme with amber accents, rich transitions, custom micro-animations, and dynamic feedback.
+
+It features complete state management (User Auth, Session management, Chat history, UI Toast alerts) and handles both authenticated user sessions and guest chat sessions.
+
+2. TECH STACK & INTEGRATIONS
+----------------------------
+- Core Framework: React 19 (Functional components, hooks, Context API).
+- Build Tool: Vite (fast hot module replacement, optimized production builds).
+- Routing: React Router DOM v6.
+- Styling: Tailwind CSS (loaded via CDN inside index.html for maximum flexibility, customized with curated CSS variables in index.css).
+- Fonts: Google Fonts "Inter" (sans-serif) for clean modern typography.
+- API requests: Fetch API with `credentials: 'include'` (crucial for transmitting HttpOnly JWT session cookies to and from the backend).
+
+3. ENVIRONMENT CONFIGURATION
+----------------------------
+The application is configured using a `.env` file located in the root of the frontend project:
+`frontend/geo-ai/.env`
+
+Available settings:
+- `VITE_API_BASE_URL`: The full URL prefix of the FastAPI backend app (e.g. `http://localhost:1001`). If not defined, fallback defaults to `http://localhost:1001`.
+
+4. SYSTEM ARCHITECTURE & DATA FLOWS
+------------------------------------
+A. Authentication & Security Flow
+   1. The user logs in via `LoginPage.jsx` or registers via `RegisterPage.jsx`.
+   2. The credentials are sent to the backend endpoint.
+   3. The backend responds by setting an `access_token` JWT cookie. The cookie is configured as `HttpOnly`, `SameSite=Lax`, and `Secure=False` (for development over HTTP).
+   4. On app initialization (inside `AuthContext.jsx`), a request is automatically dispatched to `/api/v1/auth/me` to hydrate the user profile state (`getMe`).
+   5. If the cookie is valid, the user's profile is loaded. If it fails or is missing, the user state remains `null` (guest mode).
+   6. All API requests use the customized `apiFetch` client which forces `credentials: 'include'` so browser cookies are attached automatically to every request.
+
+B. Chat Session Lifecycle
+   - Guest Mode: If a user is not logged in, they can still chat. The messages are appended to the chat page state. The session token is stored in memory and returned by the API responses. However, because there is no logged-in user, the sidebar will show "Sign in to save your chats" and no history is persisted locally or in the sidebar.
+   - Registered User Mode: When logged in, any new message sent will auto-create a backend `ChatSession` record. The session's title is automatically generated based on the first 60 characters of the first user message. The session is returned, stored in `SessionContext`, and displayed in the sidebar grouped by date (Today, Yesterday, Older).
+
+C. Session Rename & Delete
+   - In the sidebar, authenticated users can hover over any session name.
+   - Clicking the "Edit" pencil icon switches that session into an inline input box, allowing the user to rename the title (renames are updated on the backend and refreshed in the context).
+   - Clicking the "Delete" trashcan icon prompts for confirmation, then deletes the session and all of its messages from the SQLite database.
+
+D. Chat Sharing (v1 Copy-to-Clipboard)
+   - When viewing an active session, a "Share" button appears in the top header bar (`TopBar.jsx`).
+   - Clicking it calls `POST /sessions/{id}/share` which generates a unique UUID `share_token` (persisted in the database).
+   - The frontend generates a public link: `{origin}/share/{share_token}` and copies it to the clipboard.
+   - Anyone visiting this link (even if unauthenticated) can view the read-only conversation history (`SharedChatPage.jsx`), which queries the public endpoint `GET /share/{share_token}`.
+
+5. FOLDER & FILE DOCUMENTATION
+------------------------------
+
+frontend/geo-ai/
+├── index.html          # Main HTML entry point. Configures Tailwind CDN with custom colors, loads fonts, and mounts the React root node.
+├── vite.config.js      # Vite project config. Sets up React plugin.
+├── package.json        # Declares npm dependencies (react, react-dom, react-router-dom, etc.) and run scripts.
+└── src/
+    ├── main.jsx        # Entry JavaScript file. Mounts the App component to the DOM.
+    ├── index.css       # Global stylesheet. Contains scrollbar customization, CSS color variables, and transition styles.
+    ├── App.css         # Component-specific styles (primarily fallback resets).
+    ├── App.jsx         # App router container. Wraps the routing tree inside all state providers and handles route protection.
+    │
+    ├── api/            # Directory containing functions to communicate with the FastAPI backend.
+    │   ├── client.js   # Exports `apiFetch(path, options)` wrapper around standard fetch. Configures headers and credentials.
+    │   ├── auth.js     # Wires up auth operations (`login`, `register`, `logout`, `getMe`, `updateMe`).
+    │   ├── sessions.js # Wires up session operations (`listSessions`, `deleteSession`, `renameSession`, `shareSession`, `getHistory`).
+    │   ├── chat.js     # Wires up chat requests (`sendMessage` to the LLM agent `/query` endpoint).
+    │   └── share.js    # Wires up retrieval of shared public conversations (`getSharedChat`).
+    │
+    ├── context/        # React Context providers responsible for global state management.
+    │   ├── AuthContext.jsx    # Manages current authenticated `user` object, loading states, login/logout, profile updates, and fetches session profile on startup.
+    │   ├── SessionContext.jsx # Manages list of chat sessions, active session token, and CRUD updates (refresh, rename, delete sessions).
+    │   └── ChatContext.jsx    # Manages current active messages list, loading "isThinking" states, sending queries to the API, and formatting raw query logs into user/assistant message pairs.
+    │
+    ├── components/
+    │   ├── healthStatus.jsx   # A status indicator component checking connectivity of backend endpoint `/health`.
+    │   │
+    │   ├── layout/            # Layout structure wrapper components.
+    │   │   ├── Sidebar.jsx    # Left sidebar panel. Contains the "New Chat" button, session list grouped by date (Today/Yesterday/Older), rename/delete action triggers, history/profile navigation, and sign-in indicator. Collapsible to 56px width.
+    │   │   └── TopBar.jsx     # Header banner. Displays the current chat title, a share link generator trigger, and a user profile dropdown/avatar with profile update and sign-out links.
+    │   │
+    │   ├── chat/              # Chat interactive components.
+    │   │   ├── ChatInput.jsx  # Input text box for submitting questions. Includes auto-resize height, Enter-key submission, and input disabling during thinking state.
+    │   │   ├── MessageBubble.jsx  # Renders an individual message item. Distinguishes User message styling (gray bubble, right aligned) from Assistant message styling (left-aligned with tools list). Parses markdown-style bold/monospace segments.
+    │   │   ├── ThinkingDots.jsx   # A animated micro-loader showing 3 pulsing dots when the AI is processing tool execution or text generation.
+    │   │   └── ToolsBadge.jsx     # Renders a sleek toggle list of tools run by the agent (e.g. Geocoding, Places, Weather) under the assistant's bubble.
+    │   │
+    │   └── ui/                # Common UI elements.
+    │       ├── Button.jsx     # Standard styled action button (amber background, hover states, disabled configurations).
+    │       ├── Input.jsx      # Unified text input element.
+    │       └── Toast.jsx      # Custom notifications overlay provider and hook (`useToast`) to easily show error, success, or info toast banners.
+    │
+    └── pages/                 # Full Page components corresponding to routing endpoints.
+        ├── LandingPage.jsx    # Marketing/landing intro page describing GeoAI capability with CTA redirecting to Chat or Login.
+        ├── LoginPage.jsx      # Secure user login screen. Validates input and logs user in.
+        ├── RegisterPage.jsx   # New user signup screen. Checks password length (min 8 chars) and creates accounts.
+        ├── ChatPage.jsx       # The main interface. Manages chat logs, active inputs, sidebars, topbars, auto-scrolling, and sample prompt buttons.
+        ├── ProfilePage.jsx    # User dashboard allowing updating profile display names.
+        ├── HistoryPage.jsx    # Simple tabular/list log of all conversations and queries owned by the authenticated user.
+        └── SharedChatPage.jsx # Public read-only page showing shared conversation details for any visitor having a valid share token.
+
+6. STATE PROVIDERS & PROPS DETAILS
+----------------------------------
+1. AuthContext State:
+   - `user`: `{ id: int, email: string, full_name: string, is_active: boolean, created_at: string }` or `null`.
+   - `isLoading`: boolean. True during startup check.
+   - Methods: `login(email, password)`, `register(email, password, full_name)`, `logout()`, `updateProfile(full_name)`.
+
+2. SessionContext State:
+   - `sessions`: Array of `{ id: int, session_token: string, title: string, created_at: string, share_token: string|null }`.
+   - `activeSessionToken`: Current active session token UUID (or `null`).
+   - Methods: `refreshSessions()`, `removeSession(id)`, `renameSession(id, title)`.
+
+3. ChatContext State:
+   - `messages`: Array of `{ role: 'user'|'assistant', content: string, tools_used: string[], id: string }`.
+   - `isThinking`: boolean. True when waiting for LLM query responses.
+   - `currentSessionToken`: Session token UUID string.
+   - Methods: `sendMessage(query, onSessionToken)`, `loadHistory(sessionId, sessionToken)`, `clearMessages()`.
+
+7. RUNNING & COMPILING THE FRONTEND
+-----------------------------------
+- Ensure the Node dependencies are installed:
+  `cd frontend/geo-ai`
+  `npm install`
+- Start the development local server:
+  `npm run dev` (Runs on `http://localhost:5173` by default)
+- Build static bundle for production deployment:
+  `npm run build` (Compiles code and writes static resources to `dist/` directory)
+- Lint codebase:
+  `npm run lint`

@@ -35,6 +35,10 @@ class PlacesService:
             response = await self.client.post(
                 self.base_url,
                 data={"data": query},
+                headers={
+                    "User-Agent": "GeoAI/1.0 (geospatial assistant; educational project)",
+                    "Accept": "application/json"
+                },
                 timeout=settings.REQUEST_TIMEOUT_SECONDS
             )
             response.raise_for_status()
