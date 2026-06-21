@@ -22,6 +22,9 @@ wheels/
 .pytest_cache/
 .coverage
 htmlcov/
+coverage.xml
+test-reports/
+coverage/
 
 # Node / Frontend
 node_modules/
