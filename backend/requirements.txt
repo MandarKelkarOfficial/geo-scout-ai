@@ -8,6 +8,7 @@ sqlalchemy[asyncio]
 aiosqlite
 pytest
 pytest-asyncio
+pytest-cov
 respx
 structlog
 alembic

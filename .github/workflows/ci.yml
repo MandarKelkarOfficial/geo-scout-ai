@@ -16,15 +16,15 @@ jobs:
         with:
           python-version: "3.11"
       - name: Install dependencies
+        working-directory: ./backend
         run: |
           python -m pip install --upgrade pip
-          cd backend
           pip install -r requirements.txt
-          pip install pytest
-      - name: Run Tests
-        run: |
-          cd backend
-          pytest
+          pip install pytest pytest-cov
+
+      - name: Run Backend Tests & Coverage
+        working-directory: ./backend
+        run: pytest --cov=app --cov-report=xml
 
   frontend-build:
     runs-on: ubuntu-latest
@@ -34,8 +34,9 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: "20"
-      - name: Install and Build
+      - name: Run Frontend Tests & Coverage
+        working-directory: ./frontend
         run: |
-          cd frontend
           npm ci
+          npm run coverage
           npm run build
